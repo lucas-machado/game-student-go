@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"game-student-go/internal/database"
 	"github.com/gorilla/mux"
+	log "github.com/sirupsen/logrus"
 	"net/http"
 	"strconv"
 )
@@ -27,7 +28,11 @@ func (s *Server) Run() error {
 	router.HandleFunc("/users", s.createUser).Methods("POST")
 	router.HandleFunc("/users", s.ListUsers).Methods("GET")
 
-	return http.ListenAndServe(fmt.Sprintf("0.0.0.0:%v", s.port), router)
+	address := "0.0.0.0"
+
+	log.Printf("listening requests at %v:%v", address, s.port)
+
+	return http.ListenAndServe(fmt.Sprintf("%v:%v", address, s.port), router)
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {

@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	log.Println("starting Game Student server")
+	log.Println("starting game student server")
 
 	cfg, err := ReadConfig()
 	if err != nil {
