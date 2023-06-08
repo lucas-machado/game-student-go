@@ -11,7 +11,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -40,7 +39,7 @@ func (s *Server) Run() error {
 
 	router.HandleFunc("/users", s.createUser).Methods("POST")
 	router.HandleFunc("/users", s.ListUsers).Methods("GET")
-	router.HandleFunc("/users/{id}", s.GetUserByID).Methods("GET")
+	router.Handle("/users/{id}", s.authenticate(http.HandlerFunc(s.GetUserByID))).Methods("GET")
 	router.HandleFunc("/signin", s.Signin).Methods("POST")
 
 	s.Handler = router
@@ -147,28 +146,6 @@ func (s *Server) GetUserByID(w http.ResponseWriter, r *http.Request) {
 	userId, err := strconv.Atoi(id)
 	if err != nil {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
-		return
-	}
-
-	tokenHeader := r.Header.Get("Authorization")
-	if tokenHeader == "" {
-		http.Error(w, "Missing token", http.StatusUnauthorized)
-		return
-	}
-
-	splitToken := strings.Split(tokenHeader, "Bearer ")
-	if len(splitToken) != 2 {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
-		return
-	}
-	requestToken := splitToken[1]
-
-	token, err := jwt.ParseWithClaims(requestToken, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return []byte(s.jwtKey), nil
-	})
-
-	if err != nil || !token.Valid {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
 	}
 
