@@ -2,7 +2,7 @@
 
 This project implements the API of the game student website in go  
 
-## TLDR
+## tldr
 
 ```bash
 make build

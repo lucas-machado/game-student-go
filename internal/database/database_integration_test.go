@@ -13,6 +13,10 @@ func setupDatabase(t *testing.T) Client {
 	}
 
 	t.Cleanup(func() {
+		if _, err = c.(*client).db.Exec("DELETE FROM users"); err != nil {
+			t.Fatalf("Failed to clean up users table: %v", err)
+		}
+
 		c.Close()
 	})
 

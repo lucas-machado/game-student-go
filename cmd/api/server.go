@@ -10,6 +10,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -37,6 +38,7 @@ func (s *Server) Run() error {
 
 	router.HandleFunc("/users", s.createUser).Methods("POST")
 	router.HandleFunc("/users", s.ListUsers).Methods("GET")
+	router.HandleFunc("/users/{id}", s.GetUserByID).Methods("GET")
 	router.HandleFunc("/signin", s.Signin).Methods("POST")
 
 	address := "0.0.0.0"
@@ -130,4 +132,53 @@ func (s *Server) Signin(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+}
+
+func (s *Server) GetUserByID(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, ok := vars["id"]
+	if !ok {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		return
+	}
+
+	userId, err := strconv.Atoi(id)
+	if err != nil {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		return
+	}
+
+	tokenHeader := r.Header.Get("Authorization")
+	if tokenHeader == "" {
+		http.Error(w, "Missing token", http.StatusUnauthorized)
+		return
+	}
+
+	splitToken := strings.Split(tokenHeader, "Bearer ")
+	if len(splitToken) != 2 {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+	requestToken := splitToken[1]
+
+	token, err := jwt.ParseWithClaims(requestToken, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(s.jwtKey), nil
+	})
+
+	if err != nil || !token.Valid {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := s.db.GetUserByID(userId)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = json.NewEncoder(w).Encode(user)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }

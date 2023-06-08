@@ -14,6 +14,7 @@ type Client interface {
 	CreateUser(email, password string) (model.User, error)
 	GetUsers() ([]model.User, error)
 	GetUserByEmail(email string) (model.User, error)
+	GetUserByID(id int) (model.User, error)
 }
 
 type client struct {
@@ -81,6 +82,20 @@ func (c *client) GetUserByEmail(email string) (model.User, error) {
 			return model.User{}, fmt.Errorf("no user found with email: %s", email)
 		}
 		return model.User{}, fmt.Errorf("querying for user by email: %w", err)
+	}
+
+	return user, nil
+}
+
+func (c *client) GetUserByID(id int) (model.User, error) {
+	query := `SELECT id, email FROM users WHERE id = $1`
+	var user model.User
+	err := c.db.QueryRow(query, id).Scan(&user.ID, &user.Email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return model.User{}, fmt.Errorf("no user found with id: %d", id)
+		}
+		return model.User{}, fmt.Errorf("querying for user by id: %w", err)
 	}
 
 	return user, nil
