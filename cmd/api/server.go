@@ -38,7 +38,6 @@ func (s *Server) Run() error {
 	router := mux.NewRouter()
 
 	router.HandleFunc("/users", s.createUser).Methods("POST")
-	router.HandleFunc("/users", s.ListUsers).Methods("GET")
 	router.Handle("/users/{id}", s.authenticate(http.HandlerFunc(s.GetUserByID))).Methods("GET")
 	router.HandleFunc("/signin", s.Signin).Methods("POST")
 
@@ -73,25 +72,6 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 
 	err = json.NewEncoder(w).Encode(response)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-func (s *Server) ListUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := s.db.GetUsers()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	jsonResponse, err := json.Marshal(users)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	_, err = w.Write(jsonResponse)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

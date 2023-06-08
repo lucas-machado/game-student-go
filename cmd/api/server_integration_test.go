@@ -90,15 +90,6 @@ func TestCreateUser(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 }
 
-func TestListUsers(t *testing.T) {
-	cleanupDB()
-	resp, err := http.Get("http://localhost:8080/users")
-	if err != nil {
-		t.Fatalf("Could not send GET request: %v", err)
-	}
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-}
-
 func TestSignin(t *testing.T) {
 	cleanupDB()
 
