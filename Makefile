@@ -60,4 +60,4 @@ setup:
 
 .PHONY: mocks
 mocks:
-	moq -out internal/database/mock_database.go internal/database Database
+	moq -out internal/database/mock_database.go internal/database Client
