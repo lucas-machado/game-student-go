@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"game-student-go/internal/database"
 	log "github.com/sirupsen/logrus"
+	"net/http"
 	"strconv"
 )
 
@@ -27,5 +29,7 @@ func main() {
 
 	server := NewServer(port, db, cfg.JWTKey)
 
-	log.Fatal(server.Run())
+	if err := server.Run(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
 }

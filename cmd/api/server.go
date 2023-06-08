@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"game-student-go/internal/database"
@@ -15,9 +16,9 @@ import (
 )
 
 type Server struct {
-	port   int
 	db     database.Client
 	jwtKey string
+	http.Server
 }
 
 type JWTClaims struct {
@@ -26,11 +27,12 @@ type JWTClaims struct {
 }
 
 func NewServer(port int, db database.Client, jwtKey string) *Server {
-	return &Server{
-		port:   port,
+	s := &Server{
 		db:     db,
 		jwtKey: jwtKey,
 	}
+	s.Addr = fmt.Sprintf("0.0.0.0:%d", port)
+	return s
 }
 
 func (s *Server) Run() error {
@@ -41,11 +43,11 @@ func (s *Server) Run() error {
 	router.HandleFunc("/users/{id}", s.GetUserByID).Methods("GET")
 	router.HandleFunc("/signin", s.Signin).Methods("POST")
 
-	address := "0.0.0.0"
+	s.Handler = router
 
-	log.Printf("listening requests at %v:%v", address, s.port)
+	log.Printf("listening requests at %v", s.Addr)
 
-	return http.ListenAndServe(fmt.Sprintf("%v:%v", address, s.port), router)
+	return s.ListenAndServe()
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
@@ -181,4 +183,8 @@ func (s *Server) GetUserByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.Server.Shutdown(ctx)
 }
