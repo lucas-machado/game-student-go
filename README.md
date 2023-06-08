@@ -2,6 +2,15 @@
 
 This project implements the API of the game student website in go  
 
+## TLDR
+
+```bash
+make build
+make deps
+make migrate
+make run
+```
+
 ## Getting Started
 
 Below are a few commands you can use to test the project. Make sure 

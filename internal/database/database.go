@@ -10,9 +10,10 @@ import (
 )
 
 type Client interface {
+	Close()
 	CreateUser(email, password string) (model.User, error)
 	GetUsers() ([]model.User, error)
-	Close()
+	GetUserByEmail(email string) (model.User, error)
 }
 
 type client struct {
@@ -69,4 +70,18 @@ func (c *client) Close() {
 	if err != nil {
 		log.Errorf("closing database: %v", err)
 	}
+}
+
+func (c *client) GetUserByEmail(email string) (model.User, error) {
+	query := `SELECT id, email, password FROM users WHERE email = $1`
+	var user model.User
+	err := c.db.QueryRow(query, email).Scan(&user.ID, &user.Email, &user.Password)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return model.User{}, fmt.Errorf("no user found with email: %s", email)
+		}
+		return model.User{}, fmt.Errorf("querying for user by email: %w", err)
+	}
+
+	return user, nil
 }

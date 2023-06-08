@@ -4,21 +4,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"game-student-go/internal/database"
+	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 type Server struct {
-	port int
-	db   database.Client
+	port   int
+	db     database.Client
+	jwtKey string
 }
 
-func NewServer(port int, db database.Client) *Server {
+type JWTClaims struct {
+	Email string `json:"email"`
+	jwt.StandardClaims
+}
+
+func NewServer(port int, db database.Client, jwtKey string) *Server {
 	return &Server{
-		port: port,
-		db:   db,
+		port:   port,
+		db:     db,
+		jwtKey: jwtKey,
 	}
 }
 
@@ -27,6 +37,7 @@ func (s *Server) Run() error {
 
 	router.HandleFunc("/users", s.createUser).Methods("POST")
 	router.HandleFunc("/users", s.ListUsers).Methods("GET")
+	router.HandleFunc("/signin", s.Signin).Methods("POST")
 
 	address := "0.0.0.0"
 
@@ -81,4 +92,42 @@ func (s *Server) ListUsers(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) Signin(w http.ResponseWriter, r *http.Request) {
+	creds := &SignInRequest{}
+	err := json.NewDecoder(r.Body).Decode(creds)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	user, err := s.db.GetUserByEmail(creds.Email)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(creds.Password)); err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	expirationTime := time.Now().Add(5 * time.Minute)
+	claims := &JWTClaims{
+		Email: creds.Email,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: expirationTime.Unix(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(s.jwtKey))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
 }

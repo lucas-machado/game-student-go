@@ -25,7 +25,7 @@ func main() {
 	}
 	defer db.Close()
 
-	server := NewServer(port, db)
+	server := NewServer(port, db, cfg.JWTKey)
 
 	log.Fatal(server.Run())
 }
