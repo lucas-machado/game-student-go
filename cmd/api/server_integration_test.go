@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"game-student-go/internal/database"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -149,6 +150,41 @@ func TestGetUserByID(t *testing.T) {
 	req.Header.Add("Authorization", "Bearer "+jwt["token"])
 
 	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Could not send GET request: %v", err)
+	}
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestGetCourses(t *testing.T) {
+	resp, err := http.Get("http://localhost:8080/courses")
+	if err != nil {
+		t.Fatalf("Could not send GET request: %v", err)
+	}
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestGetCourseByID(t *testing.T) {
+	cleanupDB()
+
+	cfg, err := ReadConfig()
+	if err != nil {
+		log.Fatalf("reading config: %v", err)
+	}
+
+	db, err := sql.Open("postgres", cfg.DBCon)
+	if err != nil {
+		log.Fatalf("Error opening connection to the database: %v", err)
+	}
+	defer db.Close()
+
+	row := db.QueryRow("INSERT INTO courses (name, description, logo_url) VALUES ('Intro to Programming', 'A beginner course for programming.', 'http://example.com/logo.png') RETURNING id")
+	var id int
+	if err := row.Scan(&id); err != nil {
+		t.Fatalf("Failed to retrieve id: %v", err)
+	}
+
+	resp, err := http.Get(fmt.Sprintf("http://localhost:8080/courses/%v", id))
 	if err != nil {
 		t.Fatalf("Could not send GET request: %v", err)
 	}

@@ -15,6 +15,8 @@ type Client interface {
 	GetUsers() ([]model.User, error)
 	GetUserByEmail(email string) (model.User, error)
 	GetUserByID(id int) (model.User, error)
+	GetCourses() ([]model.Course, error)
+	GetCourseByID(id int) (model.Course, error)
 }
 
 type client struct {
@@ -99,4 +101,37 @@ func (c *client) GetUserByID(id int) (model.User, error) {
 	}
 
 	return user, nil
+}
+
+func (c *client) GetCourses() ([]model.Course, error) {
+	rows, err := c.db.Query("SELECT ID, name, description, logo_url FROM courses")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var courses []model.Course
+	for rows.Next() {
+		var course model.Course
+		if err := rows.Scan(&course.ID, &course.Name, &course.Description, &course.LogoURL); err != nil {
+			return nil, err
+		}
+		courses = append(courses, course)
+	}
+
+	return courses, nil
+}
+
+func (c *client) GetCourseByID(id int) (model.Course, error) {
+	query := `SELECT id, name, description, logo_url FROM courses WHERE id = $1`
+	var course model.Course
+	err := c.db.QueryRow(query, id).Scan(&course.ID, &course.Name, &course.Description, &course.LogoURL)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return model.Course{}, fmt.Errorf("no course found with id: %v", id)
+		}
+		return model.Course{}, fmt.Errorf("querying for course by id: %w", err)
+	}
+
+	return course, nil
 }

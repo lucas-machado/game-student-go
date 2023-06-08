@@ -40,6 +40,8 @@ func (s *Server) Run() error {
 	router.HandleFunc("/users", s.createUser).Methods("POST")
 	router.Handle("/users/{id}", s.authenticate(http.HandlerFunc(s.GetUserByID))).Methods("GET")
 	router.HandleFunc("/signin", s.Signin).Methods("POST")
+	router.HandleFunc("/courses", s.getCourses).Methods("GET")
+	router.HandleFunc("/courses/{id}", s.getCourseByID).Methods("GET")
 
 	s.Handler = router
 
@@ -144,4 +146,57 @@ func (s *Server) GetUserByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.Server.Shutdown(ctx)
+}
+
+func (s *Server) getCourses(w http.ResponseWriter, r *http.Request) {
+	courses, err := s.db.GetCourses()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse, err := json.Marshal(courses)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, err = w.Write(jsonResponse)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) getCourseByID(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	idStr, ok := vars["id"]
+	if !ok {
+		http.Error(w, "Invalid course ID", http.StatusBadRequest)
+		return
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "Invalid course ID format", http.StatusBadRequest)
+		return
+	}
+
+	course, err := s.db.GetCourseByID(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse, err := json.Marshal(course)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, err = w.Write(jsonResponse)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
