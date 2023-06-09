@@ -17,6 +17,7 @@ type Client interface {
 	GetUserByID(id int) (model.User, error)
 	GetCourses() ([]model.Course, error)
 	GetCourseByID(id int) (model.Course, error)
+	GetTrainingByID(id int) (model.Training, error)
 }
 
 type client struct {
@@ -134,4 +135,18 @@ func (c *client) GetCourseByID(id int) (model.Course, error) {
 	}
 
 	return course, nil
+}
+
+func (c *client) GetTrainingByID(id int) (model.Training, error) {
+	query := `SELECT id, sequence, topic, name, url, is_free, project_url, course_id FROM trainings WHERE id = $1`
+	var training model.Training
+	err := c.db.QueryRow(query, id).Scan(&training.ID, &training.Sequence, &training.Topic, &training.Name, &training.URL, &training.IsFree, &training.ProjectURL, &training.CourseID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return model.Training{}, fmt.Errorf("no training found with id: %v", id)
+		}
+		return model.Training{}, fmt.Errorf("querying for training by id: %w", err)
+	}
+
+	return training, nil
 }

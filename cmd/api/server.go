@@ -45,6 +45,7 @@ func (s *Server) Run() error {
 	router.HandleFunc("/signin", s.Signin).Methods("POST")
 	router.HandleFunc("/courses", s.getCourses).Methods("GET")
 	router.HandleFunc("/courses/{id}", s.getCourseByID).Methods("GET")
+	router.HandleFunc("/trainings/{id}", s.getTrainingByID).Methods("GET")
 
 	s.Handler = router
 
@@ -122,7 +123,10 @@ func (s *Server) Signin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+	err = json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
 }
 
 func (s *Server) GetUserByID(w http.ResponseWriter, r *http.Request) {
@@ -156,7 +160,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.Server.Shutdown(ctx)
 }
 
-func (s *Server) getCourses(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getCourses(w http.ResponseWriter, _ *http.Request) {
 	courses, err := s.db.GetCourses()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -197,6 +201,39 @@ func (s *Server) getCourseByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse, err := json.Marshal(course)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, err = w.Write(jsonResponse)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) getTrainingByID(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	idStr, ok := vars["id"]
+	if !ok {
+		http.Error(w, "Invalid training ID", http.StatusBadRequest)
+		return
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "Invalid training ID format", http.StatusBadRequest)
+		return
+	}
+
+	training, err := s.db.GetTrainingByID(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse, err := json.Marshal(training)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
