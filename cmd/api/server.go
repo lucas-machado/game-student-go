@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"game-student-go/internal/database"
+	"game-student-go/internal/notifications"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
@@ -17,6 +18,7 @@ import (
 type Server struct {
 	db     database.Client
 	jwtKey string
+	sender *notifications.Sender
 	http.Server
 }
 
@@ -25,10 +27,11 @@ type JWTClaims struct {
 	jwt.StandardClaims
 }
 
-func NewServer(port int, db database.Client, jwtKey string) *Server {
+func NewServer(port int, db database.Client, jwtKey string, sender *notifications.Sender) *Server {
 	s := &Server{
 		db:     db,
 		jwtKey: jwtKey,
+		sender: sender,
 	}
 	s.Addr = fmt.Sprintf("0.0.0.0:%d", port)
 	return s
@@ -64,6 +67,11 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	err = s.sender.SendRegistrationEmail(request.Email)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 
 	response := map[string]string{

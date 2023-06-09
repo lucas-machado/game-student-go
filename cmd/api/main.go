@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"game-student-go/internal/database"
+	"game-student-go/internal/notifications"
+	"github.com/sendgrid/sendgrid-go"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 	"strconv"
@@ -27,7 +29,9 @@ func main() {
 	}
 	defer db.Close()
 
-	server := NewServer(port, db, cfg.JWTKey)
+	sender := notifications.NewSender(sendgrid.NewSendClient(cfg.SendgridAPIKey))
+
+	server := NewServer(port, db, cfg.JWTKey, sender)
 
 	if err := server.Run(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)

@@ -57,7 +57,7 @@ func TestMain(m *testing.M) {
 	}
 	defer db.Close()
 
-	server = NewServer(port, db, cfg.JWTKey)
+	server = NewServer(port, db, cfg.JWTKey, nil)
 
 	go func() {
 		if err := server.Run(); err != nil && !errors.Is(err, http.ErrServerClosed) {
