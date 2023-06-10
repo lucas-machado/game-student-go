@@ -4,6 +4,7 @@ import (
 	"errors"
 	"game-student-go/internal/database"
 	"game-student-go/internal/notifications"
+	"github.com/newrelic/go-agent/v3/newrelic"
 	"github.com/sendgrid/sendgrid-go"
 	log "github.com/sirupsen/logrus"
 	"net/http"
@@ -29,9 +30,19 @@ func main() {
 	}
 	defer db.Close()
 
-	sender := notifications.NewSender(sendgrid.NewSendClient(cfg.SendgridAPIKey))
+	metrics, err := newrelic.NewApplication(
+		newrelic.ConfigAppName(cfg.NewRelicAppName),
+		newrelic.ConfigLicense(cfg.NewRelicLicense),
+		newrelic.ConfigAppLogForwardingEnabled(true),
+	)
 
-	server := NewServer(port, db, cfg.JWTKey, sender)
+	if err != nil {
+		log.Fatalf("creating New Relic application: %v", err)
+	}
+
+	emailSender := notifications.NewSender(sendgrid.NewSendClient(cfg.SendgridAPIKey))
+
+	server := NewServer(port, db, cfg.JWTKey, metrics, emailSender)
 
 	if err := server.Run(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)

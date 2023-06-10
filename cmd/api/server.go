@@ -8,6 +8,7 @@ import (
 	"game-student-go/internal/notifications"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
+	"github.com/newrelic/go-agent/v3/newrelic"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
@@ -16,9 +17,10 @@ import (
 )
 
 type Server struct {
-	db     database.Client
-	jwtKey string
-	sender *notifications.Sender
+	db          database.Client
+	jwtKey      string
+	newRelicApp *newrelic.Application
+	sender      *notifications.Sender
 	http.Server
 }
 
@@ -27,11 +29,12 @@ type JWTClaims struct {
 	jwt.StandardClaims
 }
 
-func NewServer(port int, db database.Client, jwtKey string, sender *notifications.Sender) *Server {
+func NewServer(port int, db database.Client, jwtKey string, newRelicApp *newrelic.Application, sender *notifications.Sender) *Server {
 	s := &Server{
-		db:     db,
-		jwtKey: jwtKey,
-		sender: sender,
+		db:          db,
+		jwtKey:      jwtKey,
+		newRelicApp: newRelicApp,
+		sender:      sender,
 	}
 	s.Addr = fmt.Sprintf("0.0.0.0:%d", port)
 	return s
@@ -40,12 +43,12 @@ func NewServer(port int, db database.Client, jwtKey string, sender *notification
 func (s *Server) Run() error {
 	router := mux.NewRouter()
 
-	router.HandleFunc("/users", s.createUser).Methods("POST")
-	router.Handle("/users/{id}", s.authenticate(http.HandlerFunc(s.GetUserByID))).Methods("GET")
-	router.HandleFunc("/signin", s.Signin).Methods("POST")
-	router.HandleFunc("/courses", s.getCourses).Methods("GET")
-	router.HandleFunc("/courses/{id}", s.getCourseByID).Methods("GET")
-	router.HandleFunc("/trainings/{id}", s.getTrainingByID).Methods("GET")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/users", s.createUser)).Methods("POST")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/signin", s.Signin)).Methods("POST")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/users/{id}", s.authenticate(s.GetUserByID))).Methods("GET")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/courses", s.getCourses)).Methods("GET")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/courses/{id}", s.getCourseByID)).Methods("GET")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/trainings/{id}", s.getTrainingByID)).Methods("GET")
 
 	s.Handler = router
 
