@@ -6,7 +6,9 @@ import (
 	"game-student-go/internal/model"
 	_ "github.com/lib/pq"
 	log "github.com/sirupsen/logrus"
+	"github.com/stripe/stripe-go"
 	"golang.org/x/crypto/bcrypt"
+	"time"
 )
 
 type Client interface {
@@ -18,6 +20,9 @@ type Client interface {
 	GetCourses() ([]model.Course, error)
 	GetCourseByID(id int) (model.Course, error)
 	GetTrainingByID(id int) (model.Training, error)
+	AddCard(userID int, stripeCardID string) (*model.Card, error)
+	GetCard(cardID int) (*model.Card, error)
+	AddCharge(charge *stripe.Charge, userID int) (*model.Charge, error)
 }
 
 type client struct {
@@ -149,4 +154,82 @@ func (c *client) GetTrainingByID(id int) (model.Training, error) {
 	}
 
 	return training, nil
+}
+
+func (c *client) AddCard(userID int, stripeCardID string) (*model.Card, error) {
+	var card model.Card
+
+	err := c.db.QueryRow(
+		`INSERT INTO cards (user_id, stripe_card_id, created_at) 
+         VALUES ($1, $2, $3)
+         RETURNING id, user_id, stripe_card_id, created_at`,
+		userID,
+		stripeCardID,
+		time.Now(),
+	).Scan(&card.ID, &card.UserID, &card.StripeCardID, &card.CreatedAt)
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to add card: %w", err)
+	}
+
+	return &card, nil
+}
+
+func (c *client) GetCard(cardID int) (*model.Card, error) {
+	var card model.Card
+
+	err := c.db.QueryRow(
+		"SELECT id, user_id, stripe_card_id, created_at FROM cards WHERE id = $1",
+		cardID,
+	).Scan(&card.ID, &card.UserID, &card.StripeCardID, &card.CreatedAt)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// No card with this ID was found
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("unable to get card: %w", err)
+	}
+
+	return &card, nil
+}
+
+func (c *client) AddCharge(charge *stripe.Charge, userID int) (*model.Charge, error) {
+	newCharge := &model.Charge{
+		StripeChargeID: charge.ID,
+		StripeCardID:   charge.Source.ID,
+		UserID:         userID,
+		Amount:         charge.Amount,
+		Currency:       string(charge.Currency),
+		Description:    charge.Description,
+		Status:         charge.Status,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	query := `
+		INSERT INTO charges (stripe_charge_id, stripe_card_id, user_id, amount, currency, description, status, created_at, updated_at) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id
+	`
+
+	err := c.db.QueryRow(
+		query,
+		newCharge.StripeChargeID,
+		newCharge.StripeCardID,
+		newCharge.UserID,
+		newCharge.Amount,
+		newCharge.Currency,
+		newCharge.Description,
+		newCharge.Status,
+		newCharge.CreatedAt,
+		newCharge.UpdatedAt,
+	).Scan(&newCharge.ID)
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to add charge: %w", err)
+	}
+
+	return newCharge, nil
 }

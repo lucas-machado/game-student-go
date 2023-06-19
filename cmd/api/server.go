@@ -11,6 +11,7 @@ import (
 	"github.com/newrelic/go-agent/v3/newrelic"
 	log "github.com/sirupsen/logrus"
 	"github.com/stripe/stripe-go"
+	"github.com/stripe/stripe-go/charge"
 	"github.com/stripe/stripe-go/customer"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
@@ -51,6 +52,8 @@ func (s *Server) Run() error {
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/courses", s.getCourses)).Methods("GET")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/courses/{id}", s.getCourseByID)).Methods("GET")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/trainings/{id}", s.getTrainingByID)).Methods("GET")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/users/{id}/addcard", s.authenticate(s.addCard))).Methods("POST")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/card/{card_id}/charge", s.authenticate(s.chargeCard))).Methods("POST")
 
 	s.Handler = router
 
@@ -62,7 +65,6 @@ func (s *Server) Run() error {
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	var request CreateUserRequest
 	err := json.NewDecoder(r.Body).Decode(&request)
-
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -73,24 +75,27 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	stripeCustomer, err := customer.New(params)
 	if err != nil {
+		log.Error("Failed to create Stripe customer:", err)
 		http.Error(w, "Failed to create Stripe customer", http.StatusInternalServerError)
 		return
 	}
 
 	user, err := s.db.CreateUser(request.Email, request.Password, stripeCustomer.ID)
-
 	if err != nil {
+		log.Error("Failed to create user:", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	err = s.sender.SendRegistrationEmail(request.Email)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Error("Failed to send registration email:", err)
+		http.Error(w, "Failed to send registration email", http.StatusInternalServerError)
+		return
 	}
 
-	response := map[string]string{
-		"id": strconv.Itoa(user.ID),
+	response := CreateUserResponse{
+		ID: strconv.Itoa(user.ID),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -98,6 +103,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
+		log.Error("Failed to encode response:", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -258,4 +264,105 @@ func (s *Server) getTrainingByID(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) addCard(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userIDStr, ok := vars["id"]
+	if !ok {
+		http.Error(w, "Bad Request - User ID is required", http.StatusBadRequest)
+		return
+	}
+
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		http.Error(w, "Bad Request - User ID must be an integer", http.StatusBadRequest)
+		return
+	}
+
+	var request AddCardRequest
+	err = json.NewDecoder(r.Body).Decode(&request)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	card, err := s.db.AddCard(userID, request.CardToken)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := struct {
+		CardID int `json:"card_id"`
+	}{
+		CardID: card.ID,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Error encoding response", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+}
+
+func (s *Server) chargeCard(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+
+	cardID, err := strconv.Atoi(vars["card_id"])
+	if err != nil {
+		http.Error(w, "Bad Request - Card ID must be an integer", http.StatusBadRequest)
+		return
+	}
+
+	card, err := s.db.GetCard(cardID)
+	if err != nil {
+		http.Error(w, "Card not found", http.StatusNotFound)
+		return
+	}
+
+	var request ChargeRequest
+	err = json.NewDecoder(r.Body).Decode(&request)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	chargeParams := &stripe.ChargeParams{
+		Amount:      stripe.Int64(request.Amount),
+		Currency:    stripe.String(request.Currency),
+		Description: stripe.String(request.Description),
+	}
+	err = chargeParams.SetSource(card.StripeCardID)
+	if err != nil {
+		http.Error(w, "Error setting source: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ch, err := charge.New(chargeParams)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	_, err = s.db.AddCharge(ch, card.UserID)
+	if err != nil {
+		http.Error(w, "Error storing charge: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if ch.Status == "succeeded" {
+		w.WriteHeader(http.StatusOK)
+	} else if ch.Status == "pending" {
+		w.WriteHeader(http.StatusAccepted)
+	} else {
+		w.WriteHeader(http.StatusBadRequest)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		ChargeID string `json:"charge_id"`
+	}{
+		ChargeID: ch.ID,
+	})
 }
