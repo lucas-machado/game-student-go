@@ -13,6 +13,7 @@ type Config struct {
 	NewRelicAppName string `conf:"default:game-student-go,env:NEW_RELIC_APP_NAME"`
 	NewRelicLicense string `conf:"env:NEW_RELIC_LICENSE"`
 	SendgridAPIKey  string `conf:"env:SENDGRID_API_KEY"`
+	StripeKey       string `conf:"env:STRIPE_SECRET_KEY"`
 }
 
 func ReadConfig() (*Config, error) {

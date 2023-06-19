@@ -11,7 +11,7 @@ import (
 
 type Client interface {
 	Close()
-	CreateUser(email, password string) (model.User, error)
+	CreateUser(email, password, stripeId string) (model.User, error)
 	GetUsers() ([]model.User, error)
 	GetUserByEmail(email string) (model.User, error)
 	GetUserByID(id int) (model.User, error)
@@ -34,15 +34,15 @@ func NewClient(connStr string) (Client, error) {
 	return &client{db: db}, nil
 }
 
-func (c *client) CreateUser(email, password string) (model.User, error) {
+func (c *client) CreateUser(email, password, stripeId string) (model.User, error) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return model.User{}, fmt.Errorf("hashing password: %w", err)
 	}
 
-	query := `INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id, email`
+	query := `INSERT INTO users (email, password, stripe_id) VALUES ($1, $2, $3) RETURNING id, email, stripe_id`
 	var user model.User
-	err = c.db.QueryRow(query, email, hashedPassword).Scan(&user.ID, &user.Email)
+	err = c.db.QueryRow(query, email, hashedPassword, stripeId).Scan(&user.ID, &user.Email, &user.StripeId)
 	if err != nil {
 		return model.User{}, fmt.Errorf("executing user insert and returning data: %w", err)
 	}

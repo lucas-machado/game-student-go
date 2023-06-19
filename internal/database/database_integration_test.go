@@ -48,7 +48,7 @@ func TestCreateUser(t *testing.T) {
 	password := "TestPassword"
 
 	// Create the user
-	user, err := db.CreateUser(email, password)
+	user, err := db.CreateUser(email, password, "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestGetUsers(t *testing.T) {
 	password := "TestPassword"
 
 	// Create the user
-	_, err := db.CreateUser(email, password)
+	_, err := db.CreateUser(email, password, "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}

@@ -10,6 +10,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/newrelic/go-agent/v3/newrelic"
 	log "github.com/sirupsen/logrus"
+	"github.com/stripe/stripe-go"
+	"github.com/stripe/stripe-go/customer"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strconv"
@@ -66,7 +68,16 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.db.CreateUser(request.Email, request.Password)
+	params := &stripe.CustomerParams{
+		Email: stripe.String(request.Email),
+	}
+	stripeCustomer, err := customer.New(params)
+	if err != nil {
+		http.Error(w, "Failed to create Stripe customer", http.StatusInternalServerError)
+		return
+	}
+
+	user, err := s.db.CreateUser(request.Email, request.Password, stripeCustomer.ID)
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

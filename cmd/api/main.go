@@ -7,6 +7,7 @@ import (
 	"github.com/newrelic/go-agent/v3/newrelic"
 	"github.com/sendgrid/sendgrid-go"
 	log "github.com/sirupsen/logrus"
+	"github.com/stripe/stripe-go"
 	"net/http"
 	"strconv"
 )
@@ -41,6 +42,8 @@ func main() {
 	}
 
 	emailSender := notifications.NewSender(sendgrid.NewSendClient(cfg.SendgridAPIKey))
+
+	stripe.Key = cfg.StripeKey
 
 	server := NewServer(port, db, cfg.JWTKey, metrics, emailSender)
 
