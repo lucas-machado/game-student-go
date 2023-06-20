@@ -15,7 +15,7 @@ type SignInRequest struct {
 }
 
 type AddCardRequest struct {
-	CardToken string `json:"card_token"`
+	PaymentMethodID string `json:"payment_method_id"`
 }
 
 type ChargeRequest struct {

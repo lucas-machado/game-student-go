@@ -10,9 +10,9 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/newrelic/go-agent/v3/newrelic"
 	log "github.com/sirupsen/logrus"
-	"github.com/stripe/stripe-go"
-	"github.com/stripe/stripe-go/charge"
-	"github.com/stripe/stripe-go/customer"
+	"github.com/stripe/stripe-go/v74"
+	"github.com/stripe/stripe-go/v74/customer"
+	"github.com/stripe/stripe-go/v74/paymentintent"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strconv"
@@ -53,7 +53,8 @@ func (s *Server) Run() error {
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/courses/{id}", s.getCourseByID)).Methods("GET")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/trainings/{id}", s.getTrainingByID)).Methods("GET")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/users/{id}/addcard", s.authenticate(s.addCard))).Methods("POST")
-	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/card/{card_id}/charge", s.authenticate(s.chargeCard))).Methods("POST")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/card/{card_id}/authorize", s.authenticate(s.authorizePayment))).Methods("POST")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/payment/{payment_id}/capture", s.authenticate(s.captureFunds))).Methods("POST")
 
 	s.Handler = router
 
@@ -287,7 +288,7 @@ func (s *Server) addCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	card, err := s.db.AddCard(userID, request.CardToken)
+	card, err := s.db.AddCard(userID, request.PaymentMethodID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -307,7 +308,7 @@ func (s *Server) addCard(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (s *Server) chargeCard(w http.ResponseWriter, r *http.Request) {
+func (s *Server) authorizePayment(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 
 	cardID, err := strconv.Atoi(vars["card_id"])
@@ -329,31 +330,35 @@ func (s *Server) chargeCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chargeParams := &stripe.ChargeParams{
-		Amount:      stripe.Int64(request.Amount),
-		Currency:    stripe.String(request.Currency),
-		Description: stripe.String(request.Description),
+	// Calculate the application fee (20% of the total amount)
+	appFee := int64(float64(request.Amount) * 0.20)
+
+	params := &stripe.PaymentIntentParams{
+		Amount:               stripe.Int64(request.Amount),
+		Currency:             stripe.String(request.Currency),
+		PaymentMethod:        stripe.String(card.StripePayMethodID),
+		Confirm:              stripe.Bool(true),
+		ConfirmationMethod:   stripe.String(string(stripe.PaymentIntentConfirmationMethodManual)),
+		CaptureMethod:        stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
+		ApplicationFeeAmount: stripe.Int64(appFee), // Set an application fee
+		TransferData: &stripe.PaymentIntentTransferDataParams{
+			Destination: stripe.String("{CONNECTED_STRIPE_ACCOUNT_ID}"), // The ID of the connected account
+		},
 	}
-	err = chargeParams.SetSource(card.StripeCardID)
-	if err != nil {
-		http.Error(w, "Error setting source: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	ch, err := charge.New(chargeParams)
+	pi, err := paymentintent.New(params)
+
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	_, err = s.db.AddCharge(ch, card.UserID)
+	_, err = s.db.AddPayment(pi, card.UserID)
 	if err != nil {
 		http.Error(w, "Error storing charge: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if ch.Status == "succeeded" {
-		w.WriteHeader(http.StatusOK)
-	} else if ch.Status == "pending" {
+	if pi.Status == stripe.PaymentIntentStatusRequiresCapture {
 		w.WriteHeader(http.StatusAccepted)
 	} else {
 		w.WriteHeader(http.StatusBadRequest)
@@ -361,8 +366,63 @@ func (s *Server) chargeCard(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(struct {
-		ChargeID string `json:"charge_id"`
+		PaymentIntentID string `json:"payment_intent_id"`
 	}{
-		ChargeID: ch.ID,
+		PaymentIntentID: pi.ID,
+	})
+}
+
+func (s *Server) captureFunds(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+
+	// Extract the PaymentIntent ID from the URL
+	paymentID := vars["payment_id"]
+
+	// Get the payment from the database
+	payment, err := s.db.GetPayment(paymentID)
+	if err != nil {
+		http.Error(w, "Payment not found", http.StatusNotFound)
+		return
+	}
+
+	// Retrieve the PaymentIntent from Stripe
+	pi, err := paymentintent.Get(payment.StripePaymentIntentID, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Check if the PaymentIntent is still in a capturable status
+	if pi.Status != stripe.PaymentIntentStatusRequiresCapture {
+		http.Error(w, "PaymentIntent cannot be captured", http.StatusBadRequest)
+		return
+	}
+
+	// Capture the PaymentIntent
+	params := &stripe.PaymentIntentCaptureParams{
+		AmountToCapture: stripe.Int64(payment.Amount),
+	}
+
+	_, err = paymentintent.Capture(pi.ID, params)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Update the payment status in the database
+	payment.Status = string(stripe.PaymentIntentStatusSucceeded)
+	_, err = s.db.UpdatePaymentStatus(payment)
+	if err != nil {
+		http.Error(w, "Error updating payment: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		PaymentIntentID string `json:"payment_intent_id"`
+		Status          string `json:"status"`
+	}{
+		PaymentIntentID: pi.ID,
+		Status:          payment.Status,
 	})
 }

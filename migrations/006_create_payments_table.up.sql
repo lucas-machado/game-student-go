@@ -1,7 +1,7 @@
-CREATE TABLE charges (
+CREATE TABLE payments (
     id SERIAL PRIMARY KEY,
-    stripe_charge_id VARCHAR(255) NOT NULL,
-    stripe_card_id VARCHAR(255) NOT NULL,
+    stripe_payment_intent_id VARCHAR(255) NOT NULL,
+    stripe_pay_method_id VARCHAR(255) NOT NULL,
     user_id INT NOT NULL,
     amount INT NOT NULL,
     currency VARCHAR(3) NOT NULL,

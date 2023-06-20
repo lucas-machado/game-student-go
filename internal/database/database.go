@@ -6,7 +6,7 @@ import (
 	"game-student-go/internal/model"
 	_ "github.com/lib/pq"
 	log "github.com/sirupsen/logrus"
-	"github.com/stripe/stripe-go"
+	"github.com/stripe/stripe-go/v74"
 	"golang.org/x/crypto/bcrypt"
 	"time"
 )
@@ -20,9 +20,11 @@ type Client interface {
 	GetCourses() ([]model.Course, error)
 	GetCourseByID(id int) (model.Course, error)
 	GetTrainingByID(id int) (model.Training, error)
-	AddCard(userID int, stripeCardID string) (*model.Card, error)
+	AddCard(userID int, stripePayMethodID string) (*model.Card, error)
 	GetCard(cardID int) (*model.Card, error)
-	AddCharge(charge *stripe.Charge, userID int) (*model.Charge, error)
+	AddPayment(pi *stripe.PaymentIntent, userID int) (*model.Payment, error)
+	GetPayment(paymentID string) (*model.Payment, error)
+	UpdatePaymentStatus(payment *model.Payment) (*model.Payment, error)
 }
 
 type client struct {
@@ -156,17 +158,17 @@ func (c *client) GetTrainingByID(id int) (model.Training, error) {
 	return training, nil
 }
 
-func (c *client) AddCard(userID int, stripeCardID string) (*model.Card, error) {
+func (c *client) AddCard(userID int, stripePayMethodID string) (*model.Card, error) {
 	var card model.Card
 
 	err := c.db.QueryRow(
-		`INSERT INTO cards (user_id, stripe_card_id, created_at) 
+		`INSERT INTO cards (user_id, stripe_pay_method_id, created_at) 
          VALUES ($1, $2, $3)
-         RETURNING id, user_id, stripe_card_id, created_at`,
+         RETURNING id, user_id, stripe_pay_method_id, created_at`,
 		userID,
-		stripeCardID,
+		stripePayMethodID,
 		time.Now(),
-	).Scan(&card.ID, &card.UserID, &card.StripeCardID, &card.CreatedAt)
+	).Scan(&card.ID, &card.UserID, &card.StripePayMethodID, &card.CreatedAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("unable to add card: %w", err)
@@ -179,9 +181,9 @@ func (c *client) GetCard(cardID int) (*model.Card, error) {
 	var card model.Card
 
 	err := c.db.QueryRow(
-		"SELECT id, user_id, stripe_card_id, created_at FROM cards WHERE id = $1",
+		"SELECT id, user_id, stripe_pay_method_id, created_at FROM cards WHERE id = $1",
 		cardID,
-	).Scan(&card.ID, &card.UserID, &card.StripeCardID, &card.CreatedAt)
+	).Scan(&card.ID, &card.UserID, &card.StripePayMethodID, &card.CreatedAt)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -195,41 +197,89 @@ func (c *client) GetCard(cardID int) (*model.Card, error) {
 	return &card, nil
 }
 
-func (c *client) AddCharge(charge *stripe.Charge, userID int) (*model.Charge, error) {
-	newCharge := &model.Charge{
-		StripeChargeID: charge.ID,
-		StripeCardID:   charge.Source.ID,
-		UserID:         userID,
-		Amount:         charge.Amount,
-		Currency:       string(charge.Currency),
-		Description:    charge.Description,
-		Status:         charge.Status,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+func (c *client) AddPayment(pi *stripe.PaymentIntent, userID int) (*model.Payment, error) {
+	newPayment := &model.Payment{
+		StripePaymentIntentID: pi.ID,
+		StripePayMethodID:     pi.PaymentMethod.ID,
+		UserID:                userID,
+		Amount:                pi.Amount,
+		Currency:              string(pi.Currency),
+		Status:                string(pi.Status),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
 	}
 
 	query := `
-		INSERT INTO charges (stripe_charge_id, stripe_card_id, user_id, amount, currency, description, status, created_at, updated_at) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id
+				INSERT INTO payments (stripe_payment_intent_id, stripe_pay_method_id, user_id, amount, currency, status, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7)
+				RETURNING id
+			`
+
+	err := c.db.QueryRow(
+		query,
+		newPayment.StripePaymentIntentID,
+		newPayment.StripePayMethodID,
+		newPayment.UserID,
+		newPayment.Amount,
+		newPayment.Currency,
+		newPayment.Status,
+		newPayment.CreatedAt,
+		newPayment.UpdatedAt,
+	).Scan(&newPayment.ID)
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to add payment: %w", err)
+	}
+
+	return newPayment, nil
+}
+
+func (c *client) GetPayment(paymentID string) (*model.Payment, error) {
+	var payment model.Payment
+
+	err := c.db.QueryRow(
+		`SELECT id, stripe_payment_intent_id, user_id, amount, currency, status, created_at, updated_at 
+         FROM payments 
+         WHERE stripe_payment_intent_id = $1`,
+		paymentID,
+	).Scan(&payment.ID, &payment.StripePaymentIntentID, &payment.UserID, &payment.Amount, &payment.Currency, &payment.Status, &payment.CreatedAt, &payment.UpdatedAt)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no payment found with ID: %s", paymentID)
+		}
+
+		return nil, fmt.Errorf("unable to get payment: %w", err)
+	}
+
+	return &payment, nil
+}
+
+func (c *client) UpdatePaymentStatus(payment *model.Payment) (*model.Payment, error) {
+	query := `
+		UPDATE payments 
+		SET status = $1, updated_at = $2 
+		WHERE stripe_payment_intent_id = $3
+		RETURNING id, stripe_payment_intent_id, amount, status, created_at, updated_at
 	`
 
 	err := c.db.QueryRow(
 		query,
-		newCharge.StripeChargeID,
-		newCharge.StripeCardID,
-		newCharge.UserID,
-		newCharge.Amount,
-		newCharge.Currency,
-		newCharge.Description,
-		newCharge.Status,
-		newCharge.CreatedAt,
-		newCharge.UpdatedAt,
-	).Scan(&newCharge.ID)
+		payment.Status,
+		time.Now(),
+		payment.StripePaymentIntentID,
+	).Scan(
+		&payment.ID,
+		&payment.StripePaymentIntentID,
+		&payment.Amount,
+		&payment.Status,
+		&payment.CreatedAt,
+		&payment.UpdatedAt,
+	)
 
 	if err != nil {
-		return nil, fmt.Errorf("unable to add charge: %w", err)
+		return nil, fmt.Errorf("unable to update payment: %w", err)
 	}
 
-	return newCharge, nil
+	return payment, nil
 }
