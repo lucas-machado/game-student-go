@@ -52,7 +52,7 @@ func (s *Server) Run() error {
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/courses", s.getCourses)).Methods("GET")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/courses/{id}", s.getCourseByID)).Methods("GET")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/trainings/{id}", s.getTrainingByID)).Methods("GET")
-	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/users/{id}/addcard", s.authenticate(s.addCard))).Methods("POST")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/users/{id}/card", s.authenticate(s.addCard))).Methods("POST")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/card/{card_id}/authorize", s.authenticate(s.authorizePayment))).Methods("POST")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/payment/{payment_id}/capture", s.authenticate(s.captureFunds))).Methods("POST")
 
