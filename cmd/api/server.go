@@ -366,9 +366,9 @@ func (s *Server) authorizePayment(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(struct {
-		PaymentIntentID string `json:"payment_intent_id"`
+		ClientSecret string `json:"client_secret"`
 	}{
-		PaymentIntentID: pi.ID,
+		ClientSecret: pi.ClientSecret,
 	})
 }
 
