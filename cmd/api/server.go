@@ -14,6 +14,7 @@ import (
 	"github.com/stripe/stripe-go/v74/customer"
 	"github.com/stripe/stripe-go/v74/paymentintent"
 	"golang.org/x/crypto/bcrypt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -55,6 +56,7 @@ func (s *Server) Run() error {
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/users/{id}/card", s.authenticate(s.addCard))).Methods("POST")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/card/{card_id}/authorize", s.authenticate(s.authorizePayment))).Methods("POST")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/payment/{payment_id}/capture", s.authenticate(s.captureFunds))).Methods("POST")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/stripe/webhook", s.handleStripeWebhook)).Methods("POST")
 
 	s.Handler = router
 
@@ -409,20 +411,62 @@ func (s *Server) captureFunds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update the payment status in the database
-	payment.Status = string(stripe.PaymentIntentStatusSucceeded)
-	_, err = s.db.UpdatePaymentStatus(payment)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
+	const MaxBodyBytes = int64(65536)
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
+
+	payload, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Error updating payment: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error reading request body", http.StatusServiceUnavailable)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(struct {
-		PaymentIntentID string `json:"payment_intent_id"`
-		Status          string `json:"status"`
-	}{
-		PaymentIntentID: pi.ID,
-		Status:          payment.Status,
-	})
+	event := stripe.Event{}
+
+	if err := json.Unmarshal(payload, &event); err != nil {
+		http.Error(w, "Error parsing request body", http.StatusBadRequest)
+		return
+	}
+
+	switch event.Type {
+	case "payment_intent.succeeded", "payment_intent.captured":
+		var paymentIntent stripe.PaymentIntent
+		err := json.Unmarshal(event.Data.Raw, &paymentIntent)
+		if err != nil {
+			http.Error(w, "Error parsing webhook JSON", http.StatusBadRequest)
+			return
+		}
+
+		payment, err := s.db.GetPayment(paymentIntent.ID)
+
+		if err != nil {
+			http.Error(w, "Payment not found", http.StatusBadRequest)
+			return
+		}
+
+		payment.Status = string(paymentIntent.Status)
+
+		_, err = s.db.UpdatePaymentStatus(payment)
+		if err != nil {
+			http.Error(w, "Payment status updated", http.StatusBadRequest)
+			return
+		}
+
+	case "payment_intent.payment_failed":
+		var paymentIntent stripe.PaymentIntent
+		err := json.Unmarshal(event.Data.Raw, &paymentIntent)
+		if err != nil {
+			http.Error(w, "Error parsing webhook JSON", http.StatusBadRequest)
+			return
+		}
+		fmt.Printf("PaymentIntent failed!\n")
+	default:
+		fmt.Fprintf(w, "Unhandled event type: %s\n", event.Type)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }

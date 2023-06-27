@@ -23,7 +23,7 @@ type Client interface {
 	AddCard(userID int, stripePayMethodID string) (*model.Card, error)
 	GetCard(cardID int) (*model.Card, error)
 	AddPayment(pi *stripe.PaymentIntent, userID int) (*model.Payment, error)
-	GetPayment(paymentID string) (*model.Payment, error)
+	GetPayment(paymentIntentID string) (*model.Payment, error)
 	UpdatePaymentStatus(payment *model.Payment) (*model.Payment, error)
 }
 
@@ -234,19 +234,19 @@ func (c *client) AddPayment(pi *stripe.PaymentIntent, userID int) (*model.Paymen
 	return newPayment, nil
 }
 
-func (c *client) GetPayment(paymentID string) (*model.Payment, error) {
+func (c *client) GetPayment(paymentIntentID string) (*model.Payment, error) {
 	var payment model.Payment
 
 	err := c.db.QueryRow(
 		`SELECT id, stripe_payment_intent_id, user_id, amount, currency, status, created_at, updated_at 
          FROM payments 
          WHERE stripe_payment_intent_id = $1`,
-		paymentID,
+		paymentIntentID,
 	).Scan(&payment.ID, &payment.StripePaymentIntentID, &payment.UserID, &payment.Amount, &payment.Currency, &payment.Status, &payment.CreatedAt, &payment.UpdatedAt)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("no payment found with ID: %s", paymentID)
+			return nil, fmt.Errorf("no payment found with ID: %s", paymentIntentID)
 		}
 
 		return nil, fmt.Errorf("unable to get payment: %w", err)
