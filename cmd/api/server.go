@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"game-student-go/internal/database"
+	"game-student-go/internal/model"
 	"game-student-go/internal/notifications"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
@@ -12,7 +13,10 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/stripe/stripe-go/v74"
 	"github.com/stripe/stripe-go/v74/customer"
+	"github.com/stripe/stripe-go/v74/ephemeralkey"
 	"github.com/stripe/stripe-go/v74/paymentintent"
+	"github.com/stripe/stripe-go/v74/paymentmethod"
+	"github.com/stripe/stripe-go/v74/setupintent"
 	"golang.org/x/crypto/bcrypt"
 	"io"
 	"net/http"
@@ -54,7 +58,8 @@ func (s *Server) Run() error {
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/courses/{id}", s.getCourseByID)).Methods("GET")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/trainings/{id}", s.getTrainingByID)).Methods("GET")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/users/{id}/card", s.authenticate(s.addCard))).Methods("POST")
-	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/card/{card_id}/authorize", s.authenticate(s.authorizePayment))).Methods("POST")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/users/{id}/cards", s.listCards)).Methods("GET")
+	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/users/{id}/cards/{paym_id}/authorize", s.authenticate(s.authorizePayment))).Methods("POST")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/payment/{payment_id}/capture", s.authenticate(s.captureFunds))).Methods("POST")
 	router.HandleFunc(newrelic.WrapHandleFunc(s.newRelicApp, "/stripe/webhook", s.handleStripeWebhook)).Methods("POST")
 
@@ -283,23 +288,39 @@ func (s *Server) addCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var request AddCardRequest
-	err = json.NewDecoder(r.Body).Decode(&request)
+	user, err := s.db.GetUserByID(userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "Bad Request - User not found", http.StatusBadRequest)
 		return
 	}
 
-	card, err := s.db.AddCard(userID, request.PaymentMethodID)
+	params := &stripe.EphemeralKeyParams{
+		Customer: stripe.String(user.StripeId),
+	}
+	params.AddMetadata("user_id", userIDStr)
+
+	ephemeralKey, err := ephemeralkey.New(params)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to create ephemeral key", http.StatusInternalServerError)
+		return
+	}
+
+	intentParams := &stripe.SetupIntentParams{
+		Customer: stripe.String(user.StripeId),
+	}
+
+	intent, err := setupintent.New(intentParams)
+	if err != nil {
+		http.Error(w, "Failed to create setup intent", http.StatusInternalServerError)
 		return
 	}
 
 	response := struct {
-		CardID int `json:"card_id"`
+		EphemeralKeyID     string `json:"ephemeral_key_id"`
+		IntentClientSecret string `json:"intent_client_secret"`
 	}{
-		CardID: card.ID,
+		EphemeralKeyID:     ephemeralKey.ID,
+		IntentClientSecret: intent.ClientSecret,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -310,24 +331,83 @@ func (s *Server) addCard(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
+func (s *Server) listCards(w http.ResponseWriter, r *http.Request) {
+	// Get the user ID from the URL parameters
+	vars := mux.Vars(r)
+	userIDStr, ok := vars["id"]
+	if !ok {
+		http.Error(w, "Bad Request - User ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// Convert the user ID to an integer
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		http.Error(w, "Bad Request - User ID must be an integer", http.StatusBadRequest)
+		return
+	}
+
+	// Get the user from the database
+	user, err := s.db.GetUserByID(userID)
+	if err != nil {
+		http.Error(w, "Bad Request - User not found", http.StatusBadRequest)
+		return
+	}
+
+	// Get the Stripe customer ID
+	customerID := user.StripeId
+
+	// List all cards for the Stripe customer
+	params := &stripe.PaymentMethodListParams{
+		Customer: stripe.String(customerID),
+		Type:     stripe.String(string(stripe.PaymentMethodTypeCard)),
+	}
+	result := paymentmethod.List(params)
+
+	var cards []model.Card
+	for result.Next() {
+		pm := result.PaymentMethod()
+		card := model.Card{
+			ID:       pm.ID,
+			Brand:    string(pm.Card.Brand),
+			LastFour: pm.Card.Last4,
+			ExpMonth: uint64(pm.Card.ExpMonth),
+			ExpYear:  uint64(pm.Card.ExpYear),
+		}
+		cards = append(cards, card)
+	}
+	if err := result.Err(); err != nil {
+		http.Error(w, "Error retrieving cards", http.StatusInternalServerError)
+		return
+	}
+
+	// Encode and return the cards
+	if err := json.NewEncoder(w).Encode(cards); err != nil {
+		http.Error(w, "Error encoding response", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func (s *Server) authorizePayment(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 
-	cardID, err := strconv.Atoi(vars["card_id"])
-	if err != nil {
-		http.Error(w, "Bad Request - Card ID must be an integer", http.StatusBadRequest)
+	userIDStr, ok := vars["id"]
+	if !ok {
+		http.Error(w, "Bad Request - User ID is required", http.StatusBadRequest)
 		return
 	}
 
-	card, err := s.db.GetCard(cardID)
+	userID, err := strconv.Atoi(userIDStr)
 	if err != nil {
-		http.Error(w, "Card not found", http.StatusNotFound)
+		http.Error(w, "Bad Request - User ID must be an integer", http.StatusBadRequest)
 		return
 	}
+
+	payMethodID := vars["paym_id"]
 
 	var request ChargeRequest
-	err = json.NewDecoder(r.Body).Decode(&request)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -338,7 +418,7 @@ func (s *Server) authorizePayment(w http.ResponseWriter, r *http.Request) {
 	params := &stripe.PaymentIntentParams{
 		Amount:               stripe.Int64(request.Amount),
 		Currency:             stripe.String(request.Currency),
-		PaymentMethod:        stripe.String(card.StripePayMethodID),
+		PaymentMethod:        stripe.String(payMethodID),
 		Confirm:              stripe.Bool(true),
 		ConfirmationMethod:   stripe.String(string(stripe.PaymentIntentConfirmationMethodManual)),
 		CaptureMethod:        stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
@@ -354,7 +434,7 @@ func (s *Server) authorizePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = s.db.AddPayment(pi, card.UserID)
+	_, err = s.db.AddPayment(pi, userID)
 	if err != nil {
 		http.Error(w, "Error storing charge: "+err.Error(), http.StatusInternalServerError)
 		return

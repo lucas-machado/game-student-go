@@ -1,10 +1,9 @@
 package model
 
-import "time"
-
 type Card struct {
-	ID                int
-	UserID            int
-	StripePayMethodID string
-	CreatedAt         time.Time
+	ID       string `json:"id"`
+	Brand    string `json:"brand"`
+	LastFour string `json:"last_four"`
+	ExpMonth uint64 `json:"exp_month"`
+	ExpYear  uint64 `json:"exp_year"`
 }
